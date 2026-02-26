@@ -41,6 +41,7 @@ from .email_client import AgentEmail, EmailClient
 from .epic_generator import EpicGenerator
 from .logger import S3LogHandler, configure_logging, get_logger
 from .s3_client import S3Client
+from .smtp_client import SMTPClient
 
 log = get_logger(__name__)
 
@@ -84,6 +85,7 @@ def _process_project_emails(
     s3: S3Client,
     generator: EpicGenerator,
     email_client: EmailClient,
+    smtp_client: SMTPClient,
 ) -> int:
     """Process all emails for a single project and return the count of successes.
 
@@ -147,6 +149,40 @@ def _process_project_emails(
             )
             processed_uids.append(mail.uid)
 
+            # Send reply to the sender with the generated epic attached
+            if mail.sender and accumulated_epic:
+                try:
+                    reply_body = (
+                        f"Hello,\n\n"
+                        f"We've processed your requirements for '{mail.project_name}' "
+                        f"and generated a project specification document. "
+                        f"Please see the attached file for details.\n\n"
+                        f"Best regards,\n"
+                        f"JARVIS Agent"
+                    )
+                    smtp_client.send_reply(
+                        recipient=mail.sender,
+                        subject=f"Re: {mail.subject}",
+                        body=reply_body,
+                        attachment_filename="requirements.md",
+                        attachment_content=accumulated_epic.encode("utf-8"),
+                    )
+                    log.info(
+                        "agent.reply_sent",
+                        uid=mail.uid,
+                        recipient=mail.sender,
+                        project=project_slug,
+                    )
+                except Exception as exc:  # noqa: BLE001
+                    log.error(
+                        "agent.reply_failed",
+                        uid=mail.uid,
+                        recipient=mail.sender,
+                        project=project_slug,
+                        error=str(exc),
+                    )
+                    # Continue processing; reply failure doesn't block further work
+
         except Exception as exc:  # noqa: BLE001
             log.error(
                 "agent.email_generation_failed",
@@ -197,6 +233,7 @@ def run() -> None:
     log.info("agent.run_started", timestamp=started_at.isoformat())
 
     s3 = S3Client(settings)
+    smtp_client = SMTPClient(settings)
     _LOG_PROJECT_SLUG = "agent-triage-logs"
 
     stdlib_logger = logging.getLogger()
@@ -235,7 +272,7 @@ def run() -> None:
             for project_slug, project_mails in emails_by_project.items():
                 try:
                     count = _process_project_emails(
-                        project_slug, project_mails, s3, generator, email_client
+                        project_slug, project_mails, s3, generator, email_client, smtp_client
                     )
                     processed += count
                     errors += len(project_mails) - count

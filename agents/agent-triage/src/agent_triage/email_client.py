@@ -32,7 +32,10 @@ import re
 import ssl
 from dataclasses import dataclass, field
 from email.message import Message
-from typing import Optional
+from typing import TYPE_CHECKING, Optional
+
+if TYPE_CHECKING:
+    pass
 
 from .config import Settings
 from .logger import get_logger
@@ -91,6 +94,9 @@ class AgentEmail:
     raw_attachments: list[tuple[str, bytes]] = field(default_factory=list)
     """All other attachments as (filename, bytes) pairs."""
 
+    sender: Optional[str] = None
+    """Email address of the message sender (extracted from From header)."""
+
 
 def _parse_body_tags(body: str) -> dict[str, str]:
     """Extract structured tag sections from the email body.
@@ -135,6 +141,24 @@ def _decode_header_value(raw: str) -> str:
         else:
             decoded_parts.append(part)
     return "".join(decoded_parts)
+
+
+def _extract_sender(msg: Message) -> Optional[str]:
+    """Extract the sender's email address from the From header.
+
+    Returns the decoded email address, or None if the From header is missing.
+    """
+    from_header = msg.get("From", "")
+    if not from_header:
+        return None
+    decoded = _decode_header_value(from_header)
+    # The From header may be in formats like:
+    #   user@example.com
+    #   John Doe <user@example.com>
+    # Extract just the email address
+    import re as regex
+    match = regex.search(r"[\w.-]+@[\w.-]+", decoded)
+    return match.group(0) if match else None
 
 
 def _extract_body(msg: Message) -> str:
@@ -194,6 +218,7 @@ def _parse_message(uid: str, raw_data: bytes) -> Optional[AgentEmail]:
     project_slug = _slugify(project_name)
     body = _extract_body(msg)
     extension_rules, raw_attachments = _extract_attachments(msg)
+    sender = _extract_sender(msg)
 
     # Parse structured body tags defined by email-format.md.
     tags = _parse_body_tags(body)
@@ -210,6 +235,7 @@ def _parse_message(uid: str, raw_data: bytes) -> Optional[AgentEmail]:
         directives=tags.get("directives"),
         extension_rules=extension_rules,
         raw_attachments=raw_attachments,
+        sender=sender,
     )
 
 

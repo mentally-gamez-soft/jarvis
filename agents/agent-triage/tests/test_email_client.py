@@ -17,6 +17,7 @@ from agent_triage.email_client import (
     _parse_body_tags,
     _parse_message,
     _slugify,
+    _extract_sender,
 )
 
 
@@ -246,3 +247,69 @@ class TestEmailClient:
         client.mark_as_seen("7")
 
         mock_conn.store.assert_called_once_with(b"7", "+FLAGS", "\\Seen")
+
+
+# ---------------------------------------------------------------------------
+# _extract_sender
+# ---------------------------------------------------------------------------
+
+class TestExtractSender:
+    def test_simple_email_address(self):
+        """Test extracting sender from simple email address."""
+        msg = email_lib.message_from_string("From: user@example.com\n\nBody")
+        assert _extract_sender(msg) == "user@example.com"
+
+    def test_email_with_display_name(self):
+        """Test extracting sender with display name."""
+        msg = email_lib.message_from_string(
+            'From: "John Doe" <john@example.com>\n\nBody'
+        )
+        assert _extract_sender(msg) == "john@example.com"
+
+    def test_missing_from_header(self):
+        """Test that None is returned when From header is missing."""
+        msg = email_lib.message_from_string("To: someone@example.com\n\nBody")
+        assert _extract_sender(msg) is None
+
+    def test_empty_from_header(self):
+        """Test that None is returned for empty From header."""
+        msg = email_lib.message_from_string("From: \n\nBody")
+        assert _extract_sender(msg) is None
+
+
+# ---------------------------------------------------------------------------
+# _parse_message with sender
+# ---------------------------------------------------------------------------
+
+class TestParseMessageSender:
+    def test_parse_message_extracts_sender(self):
+        """Test that _parse_message correctly extracts the sender."""
+        subject = "[JARVIS]-[test-proj] Feature"
+        body = "[title]\nTest\n[idea]\nDescription"
+        from_addr = "developer@example.com"
+
+        msg = MIMEText(body, "plain", "utf-8")
+        msg["Subject"] = subject
+        msg["From"] = from_addr
+        raw = msg.as_bytes()
+
+        parsed = _parse_message("1", raw)
+
+        assert parsed is not None
+        assert parsed.sender == from_addr
+        assert parsed.project_slug == "test-proj"
+
+    def test_parse_message_without_sender(self):
+        """Test that _parse_message handles missing sender gracefully."""
+        subject = "[JARVIS]-[test-proj] Feature"
+        body = "[title]\nTest\n[idea]\nDescription"
+
+        msg = MIMEText(body, "plain", "utf-8")
+        msg["Subject"] = subject
+        # No From header
+        raw = msg.as_bytes()
+
+        parsed = _parse_message("1", raw)
+
+        assert parsed is not None
+        assert parsed.sender is None
