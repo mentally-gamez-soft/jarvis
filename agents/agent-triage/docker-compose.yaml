@@ -1,0 +1,95 @@
+services:
+
+  # ---------------------------------------------------------------------------
+  # MinIO — S3-compatible object storage
+  # ---------------------------------------------------------------------------
+  # minio:
+  #   image: minio/minio:latest
+  #   container_name: jarvis-minio
+  #   command: server /data --console-address ":9001"
+  #   ports:
+  #     - "9000:9000"   # S3 API
+  #     - "9001:9001"   # MinIO Console UI
+  #   environment:
+  #     MINIO_ROOT_USER: ${S3_ACCESS_KEY:-minioadmin}
+  #     MINIO_ROOT_PASSWORD: ${S3_SECRET_KEY:-minioadmin}
+  #     # Webhook notification target (used by agent-triage auto-registration)
+  #     MINIO_NOTIFY_WEBHOOK_ENABLE_WEBHOOK: "on"
+  #     MINIO_NOTIFY_WEBHOOK_ENDPOINT_WEBHOOK: ${S3_NOTIFICATION_WEBHOOK_URL:-http://agent-scrum-master:8080/webhooks/minio}
+  #   volumes:
+  #     # - minio_data:/data   # uncomment alongside the minio service
+  #   healthcheck:
+  #     test: ["CMD", "mc", "ready", "local"]
+  #     interval: 10s
+  #     timeout: 5s
+  #     retries: 5
+  #   deploy:
+  #     resources:
+  #       limits:
+  #         cpus: "2.0"        # max 2 CPU cores
+  #         memory: 1G         # hard memory cap
+  #       reservations:
+  #         cpus: "0.5"        # guaranteed CPU share
+  #         memory: 256M       # guaranteed RAM
+  #   logging:
+  #     driver: "json-file"
+  #     options:
+  #       max-size: "20m"
+  #       max-file: "5"
+
+  # ---------------------------------------------------------------------------
+  # agent-triage — polls IMAP and writes epics to MinIO
+  # ---------------------------------------------------------------------------
+  agent-triage:
+    image: ${DOCKERHUB_IMAGE:-jarvis-agent-triage}:${IMAGE_TAG:-latest}
+    build:
+      context: .
+      dockerfile: Dockerfile
+      args:
+        GH_CLI_VERSION: "2.67.0"
+      secrets:
+        - gh_token
+    container_name: jarvis-agent-triage
+    env_file:
+      - .env
+    # environment:
+    #   # Override S3 endpoint to reach the minio service by name
+    #   S3_ENDPOINT_URL: http://minio:9000
+    # depends_on:
+    #   minio:
+    #     condition: service_healthy
+    restart: unless-stopped
+    stop_grace_period: 15s       # allow the entrypoint shutdown handler to finish
+    volumes:
+      - agent_triage_data:/app/data  # persists local state across container recreations
+    healthcheck:
+      # Check that the log file exists and has been written to within the last 20 minutes
+      # (accounting for the 10-minute poll interval + buffer)
+      test: ["CMD", "sh", "-c", "test -f /app/data/agent-triage.log && find /app/data/agent-triage.log -mmin -20 | grep -q ."]
+      interval: 60s              # check every 60 seconds
+      timeout: 15s                # health check timeout
+      retries: 5                 # mark unhealthy after 5 failed checks
+      start_period: 150s         # grace period before health checks begin
+    deploy:
+      resources:
+        limits:
+          cpus: "1.0"          # max 1 CPU core (cron-based agent, not latency-critical)
+          memory: 512M         # hard memory cap
+        reservations:
+          cpus: "0.10"         # guaranteed CPU share at idle
+          memory: 128M         # guaranteed RAM
+    logging:
+      driver: "json-file"
+      options:
+        max-size: "10m"        # rotate each log file after 10 MB
+        max-file: "5"          # keep at most 5 rotated files (~50 MB total)
+
+volumes:
+  agent_triage_data:             # local state for agent-triage (survives docker rm)
+  # minio_data:                  # uncomment alongside the minio service
+
+# Build-time secrets — never stored in image layers.
+# Set GH_TOKEN in your environment before running `docker compose build`.
+secrets:
+  gh_token:
+    environment: GH_TOKEN        # reads from the GH_TOKEN env var on the host

@@ -1,0 +1,16 @@
+# /etc/cron.d/agent-triage
+#
+# Run agent-triage every {{INTERVAL}} minutes.
+# {{INTERVAL}} is replaced by the entrypoint.sh script using POLL_INTERVAL_MINUTES.
+#
+# stdout and stderr are appended to the log file which is tailed by the
+# entrypoint to surface logs through `docker logs`.
+
+SHELL=/bin/sh
+PATH=/venv/bin:/usr/local/sbin:/usr/local/bin:/usr/sbin:/usr/bin:/sbin:/bin
+PYTHONPATH=/app
+
+*/{{INTERVAL}} * * * * root . /app/data/env.sh && cd /app && /venv/bin/python -m agent_triage.main >> /app/data/agent-triage.log 2>&1
+
+# Echo IMAP_HOST every minute so the value is visible in the container logs.
+* * * * * root . /app/data/env.sh && echo "IMAP_HOST=$IMAP_HOST" >> /app/data/agent-triage.log 2>&1

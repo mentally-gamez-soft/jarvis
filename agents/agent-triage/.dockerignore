@@ -1,0 +1,37 @@
+# Python runtime artefacts
+__pycache__/
+*.py[cod]
+*.pyo
+*.pyd
+.Python
+
+# Virtual environment
+.venv/
+venv/
+
+# Test & coverage artefacts
+.pytest_cache/
+htmlcov/
+.coverage
+.coverage.*
+coverage.xml
+
+# Secrets & local config
+.env
+.env.*
+
+# Dev tooling
+*.egg-info/
+dist/
+build/
+.mypy_cache/
+.ruff_cache/
+
+# Version control
+.git/
+.gitignore
+
+# Editor / OS
+.DS_Store
+*.swp
+*.swo
