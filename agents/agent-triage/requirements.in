@@ -1,0 +1,35 @@
+# agent-triage runtime dependencies
+# Compile to requirements.txt with:
+#   uv pip compile requirements.in -o requirements.txt
+
+# AWS / MinIO
+boto3
+
+# Settings management
+pydantic-settings
+pydantic
+
+# Structured logging
+structlog
+
+# GitHub Copilot SDK (technical preview — installed from source)
+git+https://github.com/github/copilot-sdk.git#subdirectory=python
+
+# Markdown utility (used for any post-processing of epic documents)
+markdown
+
+# HTTP client (ChatGPT / OpenAI-compatible API calls)
+httpx
+
+# Circuit breaker
+pybreaker
+
+# Retry with exponential back-off
+tenacity
+
+# Test dependencies (not needed at runtime, but kept here for the single-venv
+# approach inside the container dev/test stage)
+pytest
+pytest-cov
+pytest-asyncio
+coverage[toml]
