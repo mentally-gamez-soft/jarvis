@@ -211,6 +211,8 @@ docker build -t agent-triage agents/agent-triage/
 
 GH_TOKEN=$(gh auth token) docker build --no-cache --secret id=gh_token,env=GH_TOKEN -t jarvis-agent-triage:latest . 2>&1
 
+GH_TOKEN=$(gh auth token) docker build --no-cache --secret id=gh_token,env=GH_TOKEN -f Dockerfile-frontend -t jarvis-agent-triage-frontend:latest . 2>&1 | tail -50
+
 # Run (reads .env from the current directory)
 docker run --env-file agents/agent-triage/.env agent-triage
 
