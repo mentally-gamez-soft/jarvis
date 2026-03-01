@@ -254,8 +254,11 @@ jobs:
             # printf avoids adding a trailing newline that echo would insert.
             printf '%s' "$AGENT_TRIAGE_ENV" > .env
 
+            echo "pulling the images ..."
             # Pull the new image, then recreate only the changed containers.
             docker compose pull
+
+            echo "executing the containers ..."
             docker compose up -d --remove-orphans
 
             echo "Deployed ${DOCKERHUB_IMAGE}:${IMAGE_TAG}"
