@@ -248,6 +248,7 @@ jobs:
             # Expand ~ and $HOME in case the secret uses either form.
             DEPLOY_DIR="${VPS_COMPOSE_PATH/#\~/$HOME}"
             cd "$DEPLOY_DIR"
+            echo "successfully browsed into target directory"
 
             # Write/refresh the .env file from the environment variable.
             # printf avoids adding a trailing newline that echo would insert.
