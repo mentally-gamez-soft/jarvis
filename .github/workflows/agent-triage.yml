@@ -245,7 +245,9 @@ jobs:
           envs: AGENT_TRIAGE_ENV,DOCKERHUB_IMAGE,IMAGE_TAG,VPS_COMPOSE_PATH
           script: |
             set -e
-            cd "$VPS_COMPOSE_PATH"
+            # Expand ~ and $HOME in case the secret uses either form.
+            DEPLOY_DIR="${VPS_COMPOSE_PATH/#\~/$HOME}"
+            cd "$DEPLOY_DIR"
 
             # Write/refresh the .env file from the environment variable.
             # printf avoids adding a trailing newline that echo would insert.
