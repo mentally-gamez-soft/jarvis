@@ -1,0 +1,199 @@
+# =============================================================================
+# agent-triage — CI/CD pipeline
+#
+# Triggers
+# --------
+# • Pull requests targeting main  → test job only (no build, no deploy)
+# • Push to main                  → test → build & push (sha tag + latest) → deploy
+# • Push of agent-triage/vX.Y.Z  → test → build & push (semver + latest)  → deploy
+#
+# Monorepo conventions
+# --------------------
+# • Path filters ensure this workflow only runs when agent-triage files change.
+# • Git tags must be namespaced: agent-triage/v1.2.3
+#   (future agents will use agent-scrum-master/v1.2.3, etc.)
+# • One workflow file per agent under .github/workflows/.
+#
+# Required GitHub Actions secrets (Settings → Secrets → Actions)
+# --------------------------------------------------------------
+#   DOCKERHUB_USERNAME      Docker Hub login
+#   DOCKERHUB_TOKEN         Docker Hub access token (not your password)
+#   DOCKERHUB_IMAGE         Full image name, e.g. youruser/jarvis-agent-triage
+#   GH_TOKEN                GitHub token with read:packages scope (for gh extension install)
+#   VPS_HOST                VPS IP / hostname
+#   VPS_SSH_USER            SSH user on the VPS
+#   VPS_SSH_PRIVATE_KEY     Full private key content (-----BEGIN OPENSSH PRIVATE KEY-----)
+#   VPS_COMPOSE_PATH        Absolute path on the VPS with docker-compose.yaml
+#   AGENT_TRIAGE_ENV        Full content of the .env file for the VPS
+#
+# Required GitHub Actions variable (Settings → Variables → Actions)
+# -----------------------------------------------------------------
+#   GH_CLI_VERSION          GitHub CLI version used in the Docker build
+#                           (not a secret — defaults to 2.67.0 if unset)
+# =============================================================================
+
+name: agent-triage
+
+on:
+  push:
+    branches: [main]
+    # Note: GitHub ignores path filters for tag pushes — tag triggers always fire.
+    tags: ["agent-triage/v*"]
+    paths:
+      - "agents/agent-triage/**"
+      - ".github/workflows/agent-triage.yml"
+  pull_request:
+    branches: [main]
+    paths:
+      - "agents/agent-triage/**"
+      - ".github/workflows/agent-triage.yml"
+
+# Cancel any in-progress run for the same ref when a new one is triggered.
+concurrency:
+  group: agent-triage-${{ github.ref }}
+  cancel-in-progress: true
+
+# All run steps default to the agent-triage directory.
+defaults:
+  run:
+    working-directory: agents/agent-triage
+
+# ---------------------------------------------------------------------------
+# Job 1 — Unit tests
+# Runs on every PR and every push that passes path filters.
+# Matrix: the three latest CPython releases.
+# ---------------------------------------------------------------------------
+jobs:
+  test:
+    name: Tests · Python ${{ matrix.python-version }}
+    runs-on: ubuntu-latest
+    strategy:
+      fail-fast: false        # keep running other versions if one fails
+      matrix:
+        python-version: ["3.11", "3.12", "3.13"]
+
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Set up Python ${{ matrix.python-version }}
+        uses: actions/setup-python@v5
+        with:
+          python-version: ${{ matrix.python-version }}
+
+      - name: Install uv
+        run: pip install --quiet uv
+
+      - name: Create venv and install dependencies
+        run: |
+          uv venv .venv
+          uv pip install --python .venv/bin/python --quiet -r requirements.txt
+
+      - name: Run unit tests
+        run: .venv/bin/python -m pytest tests/ -v --tb=short
+
+  # ---------------------------------------------------------------------------
+  # Job 2 — Build & push Docker image
+  # Only runs on push events (main branch + version tags) — never on PRs.
+  # Depends on all test matrix legs passing.
+  # ---------------------------------------------------------------------------
+  build-push:
+    name: Build & push image
+    needs: test
+    if: github.event_name == 'push'
+    runs-on: ubuntu-latest
+
+    outputs:
+      # Primary image tag forwarded to the deploy job.
+      image_tag: ${{ steps.meta.outputs.version }}
+
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      # Compute Docker image tags from the git ref:
+      #   agent-triage/v1.2.3 → v1.2.3 + v1.2 + v1 + latest
+      #   push to main        → sha-<short> + latest
+      - name: Docker meta
+        id: meta
+        uses: docker/metadata-action@v5
+        with:
+          images: ${{ secrets.DOCKERHUB_IMAGE }}
+          tags: |
+            # Semver tags — strip the "agent-triage/" namespace prefix
+            type=match,pattern=agent-triage/v(.*),group=1,enable=${{ startsWith(github.ref, 'refs/tags/') }}
+            type=match,pattern=agent-triage/v(\d+\.\d+),group=1,enable=${{ startsWith(github.ref, 'refs/tags/') }}
+            type=match,pattern=agent-triage/v(\d+),group=1,enable=${{ startsWith(github.ref, 'refs/tags/') }}
+            # Short SHA for non-tag main pushes
+            type=sha,prefix=sha-,format=short,enable=${{ github.ref == 'refs/heads/main' }}
+            # Always push "latest" on main or version tag
+            type=raw,value=latest
+
+      - name: Set up Docker Buildx
+        uses: docker/setup-buildx-action@v3
+
+      - name: Login to Docker Hub
+        uses: docker/login-action@v3
+        with:
+          username: ${{ secrets.DOCKERHUB_USERNAME }}
+          password: ${{ secrets.DOCKERHUB_TOKEN }}
+
+      - name: Build and push
+        uses: docker/build-push-action@v6
+        with:
+          # Build context is the agent directory (not repo root)
+          context: agents/agent-triage
+          push: true
+          tags: ${{ steps.meta.outputs.tags }}
+          labels: ${{ steps.meta.outputs.labels }}
+          build-args: |
+            GH_CLI_VERSION=${{ vars.GH_CLI_VERSION || '2.67.0' }}
+          # gh_token is a build-time secret used by `gh extension install`.
+          # It is mounted only during that RUN step and never stored in any layer.
+          secrets: |
+            gh_token=${{ secrets.GH_TOKEN }}
+          # GitHub Actions cache speeds up repeated builds significantly
+          cache-from: type=gha
+          cache-to: type=gha,mode=max
+
+  # ---------------------------------------------------------------------------
+  # Job 3 — Deploy to VPS
+  # SSH into the VPS, refresh .env, pull the new image, restart the container.
+  # The "production" environment can optionally require manual approval in
+  # GitHub (Settings → Environments → production → required reviewers).
+  # ---------------------------------------------------------------------------
+  deploy:
+    name: Deploy to VPS
+    needs: build-push
+    runs-on: ubuntu-latest
+    environment: production
+
+    steps:
+      - name: Deploy via SSH
+        uses: appleboy/ssh-action@v1
+        with:
+          host: ${{ secrets.VPS_HOST }}
+          username: ${{ secrets.VPS_SSH_USER }}
+          key: ${{ secrets.VPS_SSH_PRIVATE_KEY }}
+          # Secrets are passed as environment variables, not interpolated into
+          # the script text. This prevents multi-line secret values from
+          # appearing unmasked in the runner logs.
+          envs: AGENT_TRIAGE_ENV,DOCKERHUB_IMAGE,IMAGE_TAG,VPS_COMPOSE_PATH
+          script: |
+            set -e
+            cd "$VPS_COMPOSE_PATH"
+
+            # Write/refresh the .env file from the environment variable.
+            # printf avoids adding a trailing newline that echo would insert.
+            printf '%s' "$AGENT_TRIAGE_ENV" > .env
+
+            # Pull the new image, then recreate only the changed containers.
+            docker compose pull
+            docker compose up -d --remove-orphans
+
+            echo "Deployed ${DOCKERHUB_IMAGE}:${IMAGE_TAG}"
+        env:
+          AGENT_TRIAGE_ENV: ${{ secrets.AGENT_TRIAGE_ENV }}
+          DOCKERHUB_IMAGE: ${{ secrets.DOCKERHUB_IMAGE }}
+          IMAGE_TAG: ${{ needs.build-push.outputs.image_tag }}
+          VPS_COMPOSE_PATH: ${{ secrets.VPS_COMPOSE_PATH }}
