@@ -224,6 +224,15 @@ jobs:
     environment: production
 
     steps:
+      - name: Verify SSH connectivity
+        uses: appleboy/ssh-action@v1
+        with:
+          host: ${{ secrets.VPS_HOST }}
+          username: ${{ secrets.VPS_SSH_USER }}
+          key: ${{ secrets.VPS_SSH_PRIVATE_KEY }}
+          command_timeout: 15s
+          script: echo "SSH connection OK"
+
       - name: Deploy via SSH
         uses: appleboy/ssh-action@v1
         with:
