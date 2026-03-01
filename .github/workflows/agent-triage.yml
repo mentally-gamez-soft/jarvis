@@ -18,8 +18,11 @@
 # --------------------------------------------------------------
 #   DOCKERHUB_USERNAME      Docker Hub login
 #   DOCKERHUB_TOKEN         Docker Hub access token (not your password)
-#   DOCKERHUB_IMAGE         Full image name, e.g. youruser/jarvis-agent-triage
-#                           (reused for both backend and frontend images)
+#   DOCKERHUB_IMAGE         Docker Hub username / org, e.g. youruser
+#                           (reused for both backend and frontend images;
+#                           the repo-level name is baked into the tag:
+#                           youruser:jarvis-agent-triage-<version> and
+#                           youruser:jarvis-agent-triage-frontend-<version>)
 #   GH_TOKEN                GitHub token with read:packages scope (for gh extension install)
 #   VPS_HOST                VPS IP / hostname
 #   VPS_SSH_USER            SSH user on the VPS
